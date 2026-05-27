@@ -60,7 +60,8 @@ evo init \
     --target  "$TARGET_FILE" \
     --benchmark "python {worktree}/evaluate.py --worktree {worktree} --out {worktree}/.evo_result.json" \
     --gate      "bash {worktree}/gate.sh {worktree}" \
-    --metric    "max"
+    --metric    "max" \
+    --host      "claude-code"
 
 # ── Runtime environment ───────────────────────────────────────────────────────
 # Injected into every benchmark and gate process automatically.
