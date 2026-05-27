@@ -54,7 +54,7 @@ if __name__ == '__main__':
                         help='Dropout rate for the MIL model (default: 0.25)')
     parser.add_argument('--comment', type=str, default='',
                         help='Comment to add to the experiment name (default: empty)')
-    parser.add_argument('--use_discriminator', type=bool, default=True,
+    parser.add_argument('--use_discriminator', type=lambda x: x.lower() == 'true', default=True,
                         help='Whether to use the discriminator (default: True)')
     
     args = parser.parse_args()
@@ -75,10 +75,7 @@ if __name__ == '__main__':
     # fold_num=0# For now, just use fold 0; can be parameterized later
     train_split_file = folds_dir / f'fold_{fold_num}_predictions.csv'
 
-    if args.use_discriminator:
-        use_disc = True
-    else:
-        use_disc = False
+    use_disc = args.use_discriminator
 
     # create dataset and dataloader
     train_dataset = MILDataset(
@@ -127,19 +124,12 @@ if __name__ == '__main__':
     )
     
 # Create callbacks
-    # checkpoint_callback = ModelCheckpoint(
-    #     dirpath=outdir,
-    #     monitor="val_AUROC",
-    #     save_top_k=1,
-    #     mode="max",
-    #     filename=f"fold_{fold_num}" + "-{epoch:02d}-{val_AUROC:.2f}" + f"-{args.comment}")
-    
-    # checkpoint_callback = ModelCheckpoint(
-    #     dirpath=outdir,
-    #     monitor="val_accuracy",
-    #     save_top_k=1,
-    #     mode="max",
-    #     filename=f"fold_{fold_num}" + "-{epoch:02d}-{val_accuracy:.2f}" + f"-{args.comment}")
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=outdir,
+        monitor="val_AUROC",
+        save_top_k=1,
+        mode="max",
+        filename=f"fold_{fold_num}" + "-{epoch:02d}-{val_AUROC:.2f}" + f"-{args.comment}")
     
     early_stopping_callback = EarlyStopping(
         monitor="val_AUROC",
@@ -162,7 +152,8 @@ if __name__ == '__main__':
         accumulate_grad_batches=args.accumulate_grad_batches,
         accelerator='gpu',
         limit_train_batches=0.3, limit_val_batches=0.1,
-        devices=1,)
+        devices=1,
+        callbacks=[checkpoint_callback, early_stopping_callback],)
     
     #limit_train_batches=0.1, limit_val_batches=0.01
 

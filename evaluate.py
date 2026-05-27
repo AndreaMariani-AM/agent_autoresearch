@@ -1,5 +1,5 @@
 """
-evaluate.py — GPU benchmark for HierarchicalMIL autoresearch with evo.
+evaluate.py — GPU benchmark for MammothMIL autoresearch with evo.
 
 Called directly by evo as the benchmark command (no Slurm wrapper needed):
   evo config set benchmark "python {worktree}/evaluate.py --worktree {worktree} --out {worktree}/.evo_result.json"
@@ -8,8 +8,10 @@ The only contract with evo:
   - Write {"score": <float>} to --out on success.
   - Exit 0 on success, non-zero on failure (evo marks FAILED and retries).
 
-Score metric: macro AUROC over {UC, CD}. Higher is better, robust to class
-imbalance, and avoids the logit-inflation trap that makes val_loss unreliable.
+Score metric: macro AUROC over {UC, CD} via MammothTrainer's val_AUROC
+(multiclass, torchmetrics). Higher is better, robust to class imbalance.
+
+Training uses n_classes=2 + CrossEntropyLoss throughout.
 
 Fast proxy mode: EVO_MAX_EPOCHS (default 10) keeps each iteration cheap.
 Set EVO_MAX_EPOCHS=50 or EVO_FULL_EVAL=1 for a full validation run.
@@ -18,7 +20,6 @@ Set EVO_MAX_EPOCHS=50 or EVO_FULL_EVAL=1 for a full validation run.
 from __future__ import annotations
 
 import argparse
-import importlib
 import json
 import os
 import sys
@@ -38,14 +39,15 @@ def parse_args() -> argparse.Namespace:
 
 
 # ── Dynamic import from the worktree ─────────────────────────────────────────
-# evo checks out each subagent's edits into a fresh worktree. Inserting it
-# at the front of sys.path means `import hierarchical_mil` resolves from
-# that experiment's code, not from the installed/main-branch copy.
+# evo checks out each subagent's edits into a fresh worktree. Inserting both
+# the root and src/ subdirectory means `from src.X import Y` and the legacy
+# `from models.X import Y` style used inside trainer/Discriminator both resolve
+# from that experiment's code, not from the installed/main-branch copy.
 
 def activate_worktree(worktree: Path) -> None:
-    wt_str = str(worktree)
-    if wt_str not in sys.path:
-        sys.path.insert(0, wt_str)
+    for p in (str(worktree), str(worktree / "src")):
+        if p not in sys.path:
+            sys.path.insert(0, p)
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -67,29 +69,22 @@ def build_train_config(cfg: dict, worktree: Path) -> dict:
     max_epochs = int(os.getenv("EVO_MAX_EPOCHS", cfg.get("max_epochs", 10)))
     full_eval  = os.getenv("EVO_FULL_EVAL", "0") == "1"
 
-    data_root    = Path(os.getenv("EVO_DATA_ROOT",    cfg.get("data_root",    "/data/ibd_wsi")))
     feature_root = Path(os.getenv("EVO_FEATURE_ROOT", cfg.get("feature_root", "/data/ibd_wsi/features")))
-    split_csv    = Path(os.getenv("EVO_SPLIT_CSV",    cfg.get("split_csv",    str(data_root / "splits/train_val_test.csv"))))
-
-    cell_expert_warmup = int(cfg.get("cell_expert_warmup_epochs", 2))
-    # Ensure CellExpert fires at least once before we measure
-    if max_epochs <= cell_expert_warmup and not full_eval:
-        max_epochs = cell_expert_warmup + 2
+    split_csv    = Path(os.getenv("EVO_SPLIT_CSV",    cfg.get("split_csv",    "/data/ibd_wsi/splits/fold_0_predictions.csv")))
 
     return {
-        "worktree":           worktree,
-        "data_root":          data_root,
-        "feature_root":       feature_root,
-        "split_csv":          split_csv,
-        "max_epochs":         max_epochs,
-        "batch_size":         int(cfg.get("batch_size", 8)),
-        "lr":                 float(cfg.get("lr", 1e-4)),
-        "cell_expert_warmup": cell_expert_warmup,
-        "use_amp":            cfg.get("use_amp", False),   # set True if your GPU supports bf16
-        "num_workers":        int(os.getenv("EVO_NUM_WORKERS", "4")),
-        "seed":               int(cfg.get("seed", 42)),
-        "checkpoint_dir":     worktree / ".evo_checkpoints",
-        "full_eval":          full_eval,
+        "worktree":       worktree,
+        "feature_root":   feature_root,
+        "split_csv":      split_csv,
+        "max_epochs":     max_epochs,
+        "lr":             float(cfg.get("lr", 1e-4)),
+        "weight_decay":   float(cfg.get("weight_decay", 1e-5)),
+        "moe_args":       cfg.get("moe_args", {}),
+        "use_amp":        bool(cfg.get("use_amp", False)),
+        "num_workers":    int(os.getenv("EVO_NUM_WORKERS", "4")),
+        "seed":           int(cfg.get("seed", 42)),
+        "checkpoint_dir": worktree / ".evo_checkpoints",
+        "full_eval":      full_eval,
     }
 
 
@@ -97,90 +92,96 @@ def build_train_config(cfg: dict, worktree: Path) -> dict:
 
 def run_training(cfg: dict) -> dict:
     import torch
-    import numpy as np
-    from sklearn.metrics import roc_auc_score, f1_score
+    import lightning as L
+    from lightning.pytorch.callbacks import ModelCheckpoint
+    from torch.utils.data import DataLoader
+    from src.training.trainer import MammothTrainer
+    from src.data.dataset import MILDataset
 
-    # Dynamic imports from the worktree — adjust paths to your module layout
-    try:
-        model_mod   = importlib.import_module("hierarchical_mil.model")
-        trainer_mod = importlib.import_module("hierarchical_mil.trainer")
-        data_mod    = importlib.import_module("hierarchical_mil.data")
-    except ModuleNotFoundError as exc:
-        raise RuntimeError(
-            f"Import failed from worktree {cfg['worktree']}. "
-            f"Check module layout. Error: {exc}"
-        ) from exc
+    L.seed_everything(cfg["seed"], workers=True)
 
-    torch.manual_seed(cfg["seed"])
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"[evaluate] device={device}  epochs={cfg['max_epochs']}", flush=True)
+    device_info = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"[evaluate] device={device_info}  epochs={cfg['max_epochs']}", flush=True)
 
-    # Data — adapt to your actual DataModule / DataLoader interface
-    train_loader, val_loader = data_mod.get_loaders(
-        split_csv=cfg["split_csv"],
-        feature_root=cfg["feature_root"],
-        batch_size=cfg["batch_size"],
-        num_workers=cfg["num_workers"],
-        seed=cfg["seed"],
+    # ── Data ──────────────────────────────────────────────────────────────────
+    train_dataset = MILDataset(
+        csv_path=str(cfg["split_csv"]),
+        representation_dir=str(cfg["feature_root"]),
+        split="train",
+        use_discriminator=True,
+    )
+    val_dataset = MILDataset(
+        csv_path=str(cfg["split_csv"]),
+        representation_dir=str(cfg["feature_root"]),
+        split="val",
+        use_discriminator=True,
     )
 
-    # Model — adapt to your HierarchicalMIL constructor signature
-    model = model_mod.HierarchicalMIL(
-        cell_expert_warmup_epochs=cfg["cell_expert_warmup"],
-    ).to(device)
+    train_loader = DataLoader(
+        train_dataset, batch_size=1, shuffle=True,
+        num_workers=cfg["num_workers"], pin_memory=True,
+    )
+    val_loader = DataLoader(
+        val_dataset, batch_size=1, shuffle=False,
+        num_workers=cfg["num_workers"], pin_memory=True,
+    )
 
-    # Trainer
-    trainer = trainer_mod.Trainer(
-        model=model,
-        device=device,
+    # ── Model ─────────────────────────────────────────────────────────────────
+    model = MammothTrainer(
+        n_classes=2,
         lr=cfg["lr"],
-        use_amp=cfg["use_amp"],
-        checkpoint_dir=cfg["checkpoint_dir"],
+        weight_decay=cfg["weight_decay"],
+        moe_args=cfg["moe_args"],
     )
 
-    best_auroc    = 0.0
-    best_val_loss = float("inf")
+    # ── Checkpoint ────────────────────────────────────────────────────────────
+    ckpt_dir = cfg["checkpoint_dir"]
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-    for epoch in range(1, cfg["max_epochs"] + 1):
-        train_loss = trainer.train_epoch(train_loader, epoch=epoch)
-        val_loss, logits, labels = trainer.val_epoch(val_loader)
+    ckpt_cb = ModelCheckpoint(
+        dirpath=str(ckpt_dir),
+        monitor="val_AUROC",
+        mode="max",
+        save_top_k=1,
+        filename="best",
+    )
 
-        logits_np = logits.cpu().numpy()   # (N, 2)
-        labels_np = labels.cpu().numpy()   # (N,) in {0, 1}
+    # ── Trainer ───────────────────────────────────────────────────────────────
+    precision = "16-mixed" if cfg["use_amp"] else "32-true"
 
-        try:
-            auroc = roc_auc_score(labels_np, logits_np, multi_class="ovr", average="macro")
-        except ValueError:
-            auroc = 0.5   # single class in batch — too early to measure
+    trainer = L.Trainer(
+        max_epochs=cfg["max_epochs"],
+        accelerator="auto",
+        devices=1,
+        precision=precision,
+        callbacks=[ckpt_cb],
+        logger=False,
+        enable_checkpointing=True,
+        num_sanity_val_steps=0,
+        log_every_n_steps=1,
+    )
 
-        print(f"[evaluate] epoch={epoch:03d}  train_loss={train_loss:.4f}  "
-              f"val_loss={val_loss:.4f}  auroc={auroc:.4f}", flush=True)
+    trainer.fit(model, train_loader, val_loader)
 
-        if auroc > best_auroc:
-            best_auroc    = auroc
-            best_val_loss = val_loss
-            trainer.save_checkpoint("best.pt")
-
-    # Re-evaluate best checkpoint for final per-class numbers
-    trainer.load_checkpoint("best.pt")
-    _, logits, labels = trainer.val_epoch(val_loader)
-    logits_np = logits.cpu().numpy()
-    labels_np = labels.cpu().numpy()
-    preds     = logits_np.argmax(axis=1)
-
-    f1_macro = f1_score(labels_np, preds, average="macro", zero_division=0)
-    try:
-        auroc_uc = roc_auc_score((labels_np == 0).astype(int), logits_np[:, 0])
-        auroc_cd = roc_auc_score((labels_np == 1).astype(int), logits_np[:, 1])
-    except ValueError:
-        auroc_uc = auroc_cd = float("nan")
+    # ── Extract metrics from best checkpoint ──────────────────────────────────
+    best_path = ckpt_cb.best_model_path
+    if best_path:
+        best_ckpt = torch.load(best_path, map_location="cpu", weights_only=False)
+        val_auroc = float(best_ckpt.get("val_AUROC", float("nan")))
+        val_loss  = float(best_ckpt.get("val_loss",  float("nan")))
+        f1_macro  = float(best_ckpt.get("val_F1",    float("nan")))
+    else:
+        # No improvement recorded — fall back to last epoch values
+        val_auroc = float(model.current_val_AUROC)
+        val_loss  = float(model.current_val_loss)
+        f1_macro  = float(model.current_val_F1)
 
     return {
-        "val_auroc_macro": float(best_auroc),
-        "val_auroc_uc":    float(auroc_uc),
-        "val_auroc_cd":    float(auroc_cd),
-        "val_loss":        float(best_val_loss),
-        "f1_macro":        float(f1_macro),
+        "val_auroc_macro": val_auroc,
+        "val_auroc_uc":    float("nan"),   # requires a separate predict pass
+        "val_auroc_cd":    float("nan"),
+        "val_loss":        val_loss,
+        "f1_macro":        f1_macro,
         "epochs_run":      cfg["max_epochs"],
     }
 
@@ -193,7 +194,7 @@ def sanity_checks(metrics: dict) -> None:
         raise ValueError(f"AUROC out of range: {auroc}")
     if metrics["val_loss"] != metrics["val_loss"]:
         raise ValueError("val_loss is NaN — likely logit explosion")
-    if metrics["val_loss"] > 20.0:
+    if metrics["val_loss"] > 5.0:
         raise ValueError(
             f"val_loss={metrics['val_loss']:.2f} suspiciously large — "
             "check pooling='sum' or logit magnitude"
@@ -214,7 +215,7 @@ def main() -> None:
     train_cfg      = build_train_config(experiment_cfg, worktree)
 
     print(f"[evaluate] worktree={worktree}", flush=True)
-    print(f"[evaluate] config={json.dumps({k: str(v) for k, v in train_cfg.items() if k != 'worktree'}, indent=2)}", flush=True)
+    print(f"[evaluate] config={json.dumps({k: str(v) for k, v in train_cfg.items() if k not in ('worktree', 'moe_args')}, indent=2)}", flush=True)
 
     try:
         metrics = run_training(train_cfg)

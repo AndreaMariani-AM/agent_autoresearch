@@ -120,7 +120,9 @@ class Discriminator(L.LightningModule):
         else:
             loss = self.criterion(logits.unsqueeze(0), label.long())
 
-        train_metrics = self.train_metrics(logits, label.long())
+        # unsqueeze for multiclass: torchmetrics expects (N, C) not (C,)
+        _logits_m = logits.unsqueeze(0) if self.n_classes > 1 else logits
+        train_metrics = self.train_metrics(_logits_m, label.long())
         
         self.log('train_loss', loss, on_step=False, on_epoch=True, sync_dist=True, batch_size=1, prog_bar=True)
         self.log_dict(train_metrics, on_step=False, on_epoch=True, sync_dist=True, batch_size=1, prog_bar=True)
@@ -144,7 +146,9 @@ class Discriminator(L.LightningModule):
         else:
             loss_val = self.criterion(logits.unsqueeze(0), label.long())
 
-        self.val_metrics.update(logits, label.long())
+        # unsqueeze for multiclass: torchmetrics expects (N, C) not (C,)
+        _logits_m = logits.unsqueeze(0) if self.n_classes > 1 else logits
+        self.val_metrics.update(_logits_m, label.long())
         self.log('val_loss', loss_val, on_step=False, on_epoch=True, sync_dist=True, batch_size=1, prog_bar=True)
 
         # After computing logits in validation_step
@@ -306,7 +310,9 @@ class MammothTrainer(L.LightningModule):
         else:
             loss = self.criterion(logits.unsqueeze(0), label.long())
 
-        train_metrics = self.train_metrics(logits, label.long())
+        # unsqueeze for multiclass: torchmetrics expects (N, C) not (C,)
+        _logits_m = logits.unsqueeze(0) if self.n_classes > 1 else logits
+        train_metrics = self.train_metrics(_logits_m, label.long())
         
         self.log('train_loss', loss, on_step=False, on_epoch=True, sync_dist=True, batch_size=1, prog_bar=True)
         self.log_dict(train_metrics, on_step=False, on_epoch=True, sync_dist=True, batch_size=1, prog_bar=True)
@@ -330,7 +336,9 @@ class MammothTrainer(L.LightningModule):
         else:
             loss_val = self.criterion(logits.unsqueeze(0), label.long())
 
-        self.val_metrics.update(logits, label.long())
+        # unsqueeze for multiclass: torchmetrics expects (N, C) not (C,)
+        _logits_m = logits.unsqueeze(0) if self.n_classes > 1 else logits
+        self.val_metrics.update(_logits_m, label.long())
         self.log('val_loss', loss_val, on_step=False, on_epoch=True, sync_dist=True, batch_size=1, prog_bar=True)
         self.log('val_logit_abs_max', logits.abs().max(), on_step=True, sync_dist=False, batch_size=1)
         return loss_val

@@ -13,20 +13,22 @@
 #   - GPU available on this machine (nvidia-smi should show a device)
 # ─────────────────────────────────────────────────────────────────────────────
 
+eval "$(mamba shell hook --shell bash)"
+mamba activate /group/glastonbury/conda_envs/installer_tools
+
 set -euo pipefail
 
 PROJECT_ROOT="${PWD}"
 # The single --target passed to evo init; real multi-file scope is in project.md
-TARGET_FILE="hierarchical_mil/model.py"
+TARGET_FILE="src/models/Discriminator.py"
 
 # ── Edit these paths ──────────────────────────────────────────────────────────
-DATA_ROOT="/data/ibd_wsi"
-FEATURE_ROOT="/data/ibd_wsi/features"
-SPLIT_CSV="$DATA_ROOT/splits/train_val_test.csv"
+FEATURE_ROOT="/group/glastonbury/andrea/projects/IBD/IBD_predictive_model/data/features/extracted_features/hierarchical_embeddings/virchow2_128_hierarchical_full_cohorts"
+SPLIT_CSV="/group/glastonbury/andrea/projects/IBD/IBD_predictive_model/data/folds/discriminator_folds/fold_0_predictions.csv"
 
 # Proxy-run epochs per evo iteration — keep low for fast hill-climbing.
 # Raise to 50 (or set EVO_FULL_EVAL=1) for a final validation run.
-EVO_MAX_EPOCHS=10
+EVO_MAX_EPOCHS=15
 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -58,11 +60,10 @@ evo init \
     --target  "$TARGET_FILE" \
     --benchmark "python {worktree}/evaluate.py --worktree {worktree} --out {worktree}/.evo_result.json" \
     --gate      "bash {worktree}/gate.sh {worktree}" \
-    --metric    "val_auroc_macro"
+    --metric    "max"
 
 # ── Runtime environment ───────────────────────────────────────────────────────
 # Injected into every benchmark and gate process automatically.
-evo env set EVO_DATA_ROOT    "$DATA_ROOT"
 evo env set EVO_FEATURE_ROOT "$FEATURE_ROOT"
 evo env set EVO_SPLIT_CSV    "$SPLIT_CSV"
 evo env set EVO_MAX_EPOCHS   "$EVO_MAX_EPOCHS"
@@ -74,42 +75,36 @@ cat > .evo/project.md << 'MDEOF'
 IBD subtype classifier — UC vs CD — using MammothMIL (Mixture of Experts).
 
 ## Score
-Macro AUROC over val set. Higher is better. 0.5 = random, baseline ≈ 0.72, target > 0.80.
+Macro AUROC over val set. Higher is better. 0.5 = random, baseline ≈ 0.75, target > 0.85.
 
 ## Files in scope (agents may edit these)
-- `hierarchical_mil/model.py`    — top-level MoE, expert routing, gating
-- `hierarchical_mil/experts.py`  — CellExpert, PatchExpert, RegionExpert
-- `hierarchical_mil/fusion.py`   — fusion head / additive combination logic
-- `hierarchical_mil/loss.py`     — loss terms, label smoothing, class weights
+- `src/models/Discriminator.py`    — top-level MoE architecture
+- `src/training/trainer.py`        — Lightning trainer with loss function, optimizer and training logic
+- `src/utils/implementations.py`   — scratchpad for notes and experimental code
+- `scripts/train_discriminatorMIL.py`   — human training entry point (reference only; do not modify)
 
 ## Files out of scope (do not modify)
-- `hierarchical_mil/data.py`     — data loading / splits (changing this invalidates comparison)
-- `hierarchical_mil/trainer.py`  — training loop, optimizer, AMP config
+- `data/dataset.py`     — data loading / splits (changing this invalidates comparison)
 - `evaluate.py`                  — benchmark script
 - `gate.sh`                      — gate script
 - `tests/`
 
 ## Known failure modes — avoid these
-- `pooling="sum"` inflates logit magnitudes proportional to patch count →
-  val_loss explodes, gate rejects on magnitude > 50. Use `pooling="mean"`.
-- CellExpert must have `warmup_epochs` before it contributes signal; don't
-  remove the warmup guard even if shortening the training run.
-- `use_amp=False` is required on V100s — no bfloat16, and `scatter_add_`
-  needs float32. Only set `use_amp=True` if you know the target GPU supports it.
-- Fusion MLP co-adapts on the train/val split and hurts generalisation.
-  Prefer additive combination with learned gating weights over a deep MLP.
-- Train/val asymmetry in scale dropout caused diverging val loss in earlier
-  runs — ensure any new dropout/noise layers are disabled in eval mode.
+- Only set `use_amp=True` if you know the target GPU supports it.
 
 ## Benchmark determinism
 Sampling-based — variance expected across runs. Seed is fixed per worktree
 via EVO_SEED (default 42) but stochastic training means ±0.01 AUROC noise
-is normal. Discard experiments that differ by < 0.01 from parent.
+is normal. Discard experiments that differ by < 0.03 from parent.
 
 ## Future experiment candidates
-- Attention-based pooling over cell tokens (replace mean pooling in CellExpert)
-- Curriculum learning rate schedule tied to CellExpert warmup phase
 - Contrastive auxiliary loss between UC/CD expert activations
+- Implementation of Contrstive MIL
+- All optimizers and hyperparameters
+- All activation functions
+- All architectural details: skip connections, number of layers, etc.
+- Different architectures
+- Different ways to aggregated patch features to slide level prediction
 MDEOF
 
 echo ""

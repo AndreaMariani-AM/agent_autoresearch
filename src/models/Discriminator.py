@@ -12,7 +12,6 @@ from typing import Tuple, Optional, Literal, Dict
 # from src.models.attention import AttnVanilla, GatedAttn
 from models.modules import MLP
 import lightning as L
-from mammoth import Mammoth
 from models.attention import GatedAttn
 # from models.mamba import SRMamba
 
@@ -111,6 +110,7 @@ class MammothNet(nn.Module):
 
         # ── Shared instance encoder: raw_dim → proj_dim ──────────────
         if moe_args and moe_args.get("num_experts", 0) > 0:
+            from mammoth import Mammoth
             self.encoder = Mammoth(**moe_args)
         else:
             self.encoder = MLP(
@@ -197,6 +197,7 @@ class MambaMoothNet(nn.Module):
 
         # ── Shared instance encoder: raw_dim → proj_dim ──────────────
         if moe_args and moe_args.get("num_experts", 0) > 0:
+            from mammoth import Mammoth
             self.encoder = Mammoth(**moe_args)
         else:
             self.encoder = MLP(

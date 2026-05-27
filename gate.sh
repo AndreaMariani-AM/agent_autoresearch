@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# gate.sh — evo gate for HierarchicalMIL
+# gate.sh — evo gate for MammothMIL
 #
 # Runs on the same machine immediately after benchmark passes,
 # before evo commits the experiment. Must complete in < 30 s.
@@ -37,10 +37,10 @@ PYEOF
 python3 - << PYEOF
 import sys
 sys.path.insert(0, "$WORKTREE")
+sys.path.insert(0, "$WORKTREE/src")
 try:
-    import hierarchical_mil.model as m
-    import hierarchical_mil.experts as e
-    import hierarchical_mil.fusion as f
+    from models.Discriminator import MammothNet
+    from models.experts_MIL import ExpertOutput
     print("[gate] imports OK")
 except Exception as exc:
     raise SystemExit(f"[gate] FAIL: import error: {exc}")
@@ -50,18 +50,20 @@ PYEOF
 python3 - << PYEOF
 import sys, torch
 sys.path.insert(0, "$WORKTREE")
-import hierarchical_mil.model as m
+sys.path.insert(0, "$WORKTREE/src")
+from models.Discriminator import MammothNet
 
-model = m.HierarchicalMIL()
+model = MammothNet(num_classes=2)
 model.eval()
 
 N_PATCHES  = 4
-N_FEATURES = 384   # adjust to your feature dim (768 for ViT-B, 384 for ViT-S)
+N_FEATURES = 2560  # Virchow2 CLS+mean embedding dim
 N_CLASSES  = 2     # UC / CD
 
 with torch.no_grad():
     feats  = torch.randn(1, N_PATCHES, N_FEATURES)
-    logits = model(feats)   # adapt to your actual forward() signature
+    output = model(feats)   # returns ExpertOutput
+    logits = output.logits  # shape (N_CLASSES,)
 
 assert logits.shape[-1] == N_CLASSES, \
     f"[gate] FAIL: expected logits [..., {N_CLASSES}], got {tuple(logits.shape)}"
