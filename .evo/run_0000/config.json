@@ -1,0 +1,27 @@
+{
+  "benchmark": "python {worktree}/evaluate.py --worktree {worktree} --out {worktree}/.evo_result.json",
+  "commit_strategy": "all",
+  "comparison_blocked": false,
+  "current_eval_epoch": 1,
+  "execution_backend": "worktree",
+  "frontier_strategy": {
+    "kind": "pareto_per_task",
+    "params": {
+      "k": 5,
+      "task_floor": 0.0
+    }
+  },
+  "gate": "bash {worktree}/gate.sh {worktree}",
+  "initialized_at": "2026-05-27T16:59:23+00:00",
+  "max_attempts": 3,
+  "metric": "max",
+  "project_name": "autoresearch",
+  "repo_root": "/group/glastonbury/andrea/projects/IBD/autoresearch",
+  "runtime_env": {
+    "dotenv": [],
+    "inherit_shell": true
+  },
+  "target": "src/models/Discriminator.py",
+  "workspace_dir": ".evo",
+  "worktrees_dir": "worktrees"
+}

@@ -64,11 +64,16 @@ evo init \
     --host      "claude-code"
 
 # ── Runtime environment ───────────────────────────────────────────────────────
-# Injected into every benchmark and gate process automatically.
-evo env set EVO_FEATURE_ROOT "$FEATURE_ROOT"
-evo env set EVO_SPLIT_CSV    "$SPLIT_CSV"
-evo env set EVO_MAX_EPOCHS   "$EVO_MAX_EPOCHS"
-evo env set EVO_NUM_WORKERS  "4"
+# Write a dotenv file and load it so every benchmark/gate process inherits
+# these variables automatically.
+cat > .evo/benchmark.env << ENVEOF
+EVO_FEATURE_ROOT=$FEATURE_ROOT
+EVO_SPLIT_CSV=$SPLIT_CSV
+EVO_MAX_EPOCHS=$EVO_MAX_EPOCHS
+EVO_NUM_WORKERS=4
+ENVEOF
+
+evo env load --all .evo/benchmark.env
 
 # ── project.md — the agent's authoritative scope document ────────────────────
 cat > .evo/project.md << 'MDEOF'
