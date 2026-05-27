@@ -134,6 +134,136 @@ class RepresentationsDataset(Dataset):
         
         return (embeddings, label, slide_id)
     
+class MILDataset(Dataset):
+    """
+    Dataset for whole slide image (WSI) embeddings for Multiple Instance Learning.
+    
+    Assumes embeddings are stored as .h5ad files with shape (n_tiles, embedding_dim).
+    """
+    
+    def __init__(
+        self,
+        csv_path: str,
+        representation_dir: str,
+        max_tiles: Optional[int] = None,
+        split: str = 'train',
+        use_discriminator: bool = False,
+    ):
+        """
+        Args:
+            csv_path: Path to CSV file containing slide metadata
+            representation_dir: Directory where embeddings are stored
+            max_tiles: Maximum number of tiles to use (random sampling if exceeded)
+            split: 'train' or 'val' to indicate dataset split
+            use_discriminator: Whether to use labels from discriminator inference
+        """
+        self.metadata = pd.read_csv(csv_path)
+
+        if use_discriminator:
+            self.metadata = self.metadata[
+                (self.metadata['final_training'] == True) & (self.metadata['Condition'].isin(['CD', 'UC']))
+                ].reset_index(drop=True)
+        else:
+            self.metadata = self.metadata[
+                (self.metadata['use_slide'] == True) & (self.metadata['Condition'].isin(['CD', 'UC']))
+                ].reset_index(drop=True)
+            
+        self.metadata = self.metadata[self.metadata['split'] == split].reset_index(drop=True)
+        self.max_tiles = max_tiles
+        self.representation_dir = representation_dir
+      
+        print(f"Loaded {len(self.metadata)} slides for split '{split}'")
+        
+        # Get list of slide IDs that have both embeddings and labels
+        self.label_dict = self._get_label_dict()
+        self.slide_ids = list(self.label_dict.keys())
+        
+        if len(self.slide_ids) == 0:
+            raise ValueError(f"No slides found in csv file: {csv_path} for split: {split}")
+    
+    def _get_label_dict(self) -> Dict[str, int]:
+        """Create a dictionary mapping slide IDs to integer labels."""
+        samples_list = self.metadata['Slide'].apply(lambda x: os.path.basename(x).split('.')[0]).tolist()
+        conditions_list = self.metadata['Condition'].tolist()
+        _LABEL_map = {"CD": 0, "UC": 1}
+        encoded_labels = torch.tensor([_LABEL_map[cond] for cond in conditions_list], dtype=torch.int64)
+        return {slide: label for slide, label in zip(samples_list, encoded_labels)}
+
+    def get_pos_weight(self) -> torch.Tensor:
+        """Compute the positive-class weight for BCEWithLogitsLoss.
+
+        Returns
+        -------
+        pos_weight : Tensor ``(1,)`` float32
+            ``n_CD / n_UC`` — upweights UC (label=1) when CD
+            is the majority class, downweights it when UC dominates.
+            Matches the formula expected by ``nn.BCEWithLogitsLoss(pos_weight=...)``.
+        """
+        conditions = self.metadata['Condition'].tolist()
+        n_neg = conditions.count('CD')       # label 0
+        n_pos = conditions.count('UC')  # label 1
+        if n_pos == 0:
+            raise ValueError("No 'UC' slides found in this split — cannot compute pos_weight.")
+        print(f"Class counts — CD (neg): {n_neg}, UC (pos): {n_pos}, pos_weight: {n_neg/n_pos:.3f}")
+        return torch.tensor([n_neg / n_pos], dtype=torch.float32)
+
+    def _load_embeddings(self, slide_id: str) -> torch.Tensor:
+        """
+        Load embeddings from disk, auto-detecting the file format.
+
+        Supports two layouts:
+
+        * **Hierarchical H5** — raw HDF5 with ``/mid/H`` dataset of
+          shape ``(N, D)``.  Only the embeddings are read; region and
+          coordinate metadata are ignored.
+        * **AnnData H5** (legacy) — ``anndata``-formatted ``.h5`` file
+          where ``adata.X`` holds the ``(N, D)`` embeddings.
+
+        The format is detected by probing for the ``mid/H`` key.
+
+        Returns
+        -------
+        embeddings : Tensor ``(N, D)`` float32
+        """
+        file_path = os.path.join(self.representation_dir, f"{slide_id}.h5")
+
+        # Probe file to decide format
+        with h5py.File(file_path, "r") as f:
+            embeddings = torch.from_numpy(
+                np.array(f["mid/H_region"], dtype=np.float32)
+                ) #using the full CLS+mean embeddings.
+
+        # Ensure float32
+        if embeddings.dtype != torch.float32:
+            embeddings = embeddings.float()
+
+        return embeddings
+    
+    def __len__(self) -> int:
+        return len(self.slide_ids)
+    
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int, str]:
+        """
+        Returns:
+            embeddings: Tensor of shape (n_tiles, embedding_dim)
+            label: Integer label
+            slide_id: String identifier for the slide
+        """
+        slide_id = self.slide_ids[idx]
+        label = self.label_dict[slide_id]
+        
+        # Load embeddings
+        embeddings = self._load_embeddings(slide_id)
+        
+        # Sample tiles if max_tiles is set and we have more tiles
+        # DEFINE A SAMPLING STRATEGY HERE
+        if self.max_tiles is not None and embeddings.shape[0] > self.max_tiles:
+            pass
+            # indices = torch.randperm(embeddings.shape[0])[:self.max_tiles]
+            # embeddings = embeddings[indices]
+        
+        return (embeddings, label, slide_id)
+    
 class DiscriminatorInference(Dataset):
     """
     """

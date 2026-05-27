@@ -211,6 +211,7 @@ class MammothTrainer(L.LightningModule):
             lr: float = 1e-4,
             weight_decay: float = 1e-5,
             moe_args: Dict[str, Any] = {},
+            pos_weight: Optional[torch.Tensor] = None,
     ):
         """
         Lightning wrapper for MIL models.
@@ -231,7 +232,8 @@ class MammothTrainer(L.LightningModule):
         :type scale_drop_p: float
         """
         super().__init__()
-        self.save_hyperparameters()
+        self.save_hyperparameters(ignore=['pos_weight'])
+        self.register_buffer('pos_weight', pos_weight)
 
         self.n_classes = n_classes
 
@@ -240,14 +242,14 @@ class MammothTrainer(L.LightningModule):
             input_dim=input_dim,      # 2560 for Virchow2 (CLS+mean)
             hidden_dim=hidden_dim,
             output_dim=output_dim,
-            n_classes=n_classes,
+            num_classes=n_classes,
             dropout=dropout,
             moe_args=moe_args,
         )
 
         # Conditional loss: BCE for binary (n_classes=1), CrossEntropy for multi-class
         if n_classes == 1:
-            self.criterion = nn.BCEWithLogitsLoss()
+            self.criterion = nn.BCEWithLogitsLoss(pos_weight=self.pos_weight)
         else:
             self.criterion = nn.CrossEntropyLoss()
 
@@ -273,18 +275,22 @@ class MammothTrainer(L.LightningModule):
                 "AUROC": torchmetrics.classification.AUROC(**task_kwargs),
             }, prefix="val_"
             )
+
+        # Initialise checkpoint-metric attributes so on_save_checkpoint never
+        # raises AttributeError if a checkpoint is saved before validation runs.
+        self.current_val_loss     = float('nan')
+        self.current_val_accuracy = float('nan')
+        self.current_val_F1       = float('nan')
+        self.current_val_AUROC    = float('nan')
         
     def forward(
             self,
             x: torch.Tensor,
             **kwargs,
-    ):
-        """Dispatch to the underlying MIL model.
-
-        For hierarchical models, extra kwargs (region_ids, n_regions,
-        h_cell_tokens) are forwarded to ``HierarchicalMIL.forward``.
-        """
-        return self.model(x)
+    ) -> torch.Tensor:
+        """Run MammothNet and return bare logit tensor ``(n_classes,)``."""
+        expert_out = self.model(x)
+        return expert_out.logits
     
     def training_step(
             self,
@@ -292,7 +298,7 @@ class MammothTrainer(L.LightningModule):
             batch_idx
     ):
         features, label, slide_id = batch
-        logits = self(features)
+        logits = self(features)  # (n_classes,)
         
         # Conditional label casting: float for BCE, long for CrossEntropy
         if self.n_classes == 1:
@@ -316,7 +322,7 @@ class MammothTrainer(L.LightningModule):
             batch_idx
     ):
         features, label, slide_id = batch
-        logits= self(features)
+        logits = self(features)  # (n_classes,)
         
         # Conditional label casting (same smoothing as training for comparable losses)
         if self.n_classes == 1:
@@ -326,8 +332,6 @@ class MammothTrainer(L.LightningModule):
 
         self.val_metrics.update(logits, label.long())
         self.log('val_loss', loss_val, on_step=False, on_epoch=True, sync_dist=True, batch_size=1, prog_bar=True)
-
-        # After computing logits in validation_step
         self.log('val_logit_abs_max', logits.abs().max(), on_step=True, sync_dist=False, batch_size=1)
         return loss_val
     
@@ -344,7 +348,7 @@ class MammothTrainer(L.LightningModule):
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         features, slide_id = batch
-        logits = self(features)
+        logits = self(features)  # (n_classes,)
 
         #get probabilities from logits
         if self.n_classes == 1:

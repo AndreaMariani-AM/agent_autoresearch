@@ -1,0 +1,25 @@
+training_discriminator:
+  folds_dir: "/group/glastonbury/andrea/projects/IBD/IBD_predictive_model/data/folds/discriminator_folds"
+  hierarchical_h5_dir: "/group/glastonbury/andrea/projects/IBD/IBD_predictive_model/data/features/extracted_features/hierarchical_embeddings/virchow2_128_hierarchical_full_cohorts"
+  out_dir: "/group/glastonbury/andrea/projects/IBD/IBD_predictive_model/experiments/training/discriminator"
+
+inference_discriminator:
+  out_dir: "/group/glastonbury/andrea/projects/IBD/IBD_predictive_model/data/folds/discriminator_folds"
+
+train_MIL_discriminator:
+  folds_dir: "/group/glastonbury/andrea/projects/IBD/IBD_predictive_model/data/folds/discriminator_folds"
+  hierarchical_h5_dir: "/group/glastonbury/andrea/projects/IBD/IBD_predictive_model/data/features/extracted_features/hierarchical_embeddings/virchow2_128_hierarchical_full_cohorts"
+  out_dir: "/group/glastonbury/andrea/projects/IBD/IBD_predictive_model/experiments/training/discriminator"
+
+model:
+  moe_args:
+    input_dim: 2560
+    dim: 256
+    num_experts: 30
+    num_slots: 10
+    num_heads: 16
+    slot_dim: 128
+    keep_slots: True  # if True, return the E*S aggregated features instead of the N transformed patch features
+    share_lora_weights: True  # share the weights of the first low rank layer 
+    dropout: 0.1
+    auto_rank: True   # automatically calculate the appropriate low rank for parameter efficiency

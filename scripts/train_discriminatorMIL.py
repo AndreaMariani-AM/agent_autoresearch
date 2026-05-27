@@ -8,7 +8,7 @@ import yaml
 import argparse
 import pandas as pd
 from src.data.dataset import (
-    RepresentationsDataset,
+    MILDataset,
 )
 from torch.utils.data import DataLoader
 import torch
@@ -54,8 +54,8 @@ if __name__ == '__main__':
                         help='Dropout rate for the MIL model (default: 0.25)')
     parser.add_argument('--comment', type=str, default='',
                         help='Comment to add to the experiment name (default: empty)')
-    parser.add_argument('--moe_args', type=dict, default={},
-                        help='Arguments for the Mixture of Experts (MoE) model (default: empty dict)')
+    parser.add_argument('--use_discriminator', type=bool, default=True,
+                        help='Whether to use the discriminator (default: True)')
     
     args = parser.parse_args()
 
@@ -63,30 +63,38 @@ if __name__ == '__main__':
     with open(args.config_file, "r") as file_yml:
         config_file = yaml.safe_load(file_yml)
 
-    folds_dir = Path(config_file['training']['folds_dir'])
-    hierarchical_h5_dir = Path(config_file['training']['hierarchical_h5_dir'])
-    outdir = Path(config_file['training']['out_dir'])
+    folds_dir = Path(config_file['train_MIL_discriminator']['folds_dir'])
+    hierarchical_h5_dir = Path(config_file['train_MIL_discriminator']['hierarchical_h5_dir'])
+    outdir = Path(config_file['train_MIL_discriminator']['out_dir'])
+    moe_args = config_file['model'].get('moe_args', {})
     
     if not outdir.exists():
         outdir.mkdir(parents=True, exist_ok=True)
     
     fold_num=args.fold
     # fold_num=0# For now, just use fold 0; can be parameterized later
-    train_split_file = folds_dir / f'fold_{fold_num}.csv'
+    train_split_file = folds_dir / f'fold_{fold_num}_predictions.csv'
 
+    if args.use_discriminator:
+        use_disc = True
+    else:
+        use_disc = False
 
     # create dataset and dataloader
-    train_dataset = RepresentationsDataset(
+    train_dataset = MILDataset(
         csv_path=train_split_file,
         representation_dir=hierarchical_h5_dir,
         max_tiles=None,
         split='train',
+        use_discriminator=use_disc,
     )
-    val_dataset = RepresentationsDataset(
+    
+    val_dataset = MILDataset(
         csv_path=train_split_file,
         representation_dir=hierarchical_h5_dir,
         max_tiles=None,
         split='val',
+        use_discriminator=use_disc,
     )
     collate_fn = None
 
@@ -103,6 +111,8 @@ if __name__ == '__main__':
         collate_fn=collate_fn,
     )
 
+    pos_weight = train_dataset.get_pos_weight()
+
     # Load the MIL model
     model = MammothTrainer(
         input_dim=args.input_dim,
@@ -112,16 +122,17 @@ if __name__ == '__main__':
         dropout=args.dropout,
         lr=args.lr,
         weight_decay=args.weight_decay,
-        moe_args=args.moe_args,
+        moe_args=moe_args,
+        pos_weight=pos_weight,
     )
     
 # Create callbacks
-    checkpoint_callback = ModelCheckpoint(
-        dirpath=outdir,
-        monitor="val_AUROC",
-        save_top_k=1,
-        mode="max",
-        filename=f"fold_{fold_num}" + "-{epoch:02d}-{val_AUROC:.2f}" + f"-{args.comment}")
+    # checkpoint_callback = ModelCheckpoint(
+    #     dirpath=outdir,
+    #     monitor="val_AUROC",
+    #     save_top_k=1,
+    #     mode="max",
+    #     filename=f"fold_{fold_num}" + "-{epoch:02d}-{val_AUROC:.2f}" + f"-{args.comment}")
     
     # checkpoint_callback = ModelCheckpoint(
     #     dirpath=outdir,
@@ -138,19 +149,19 @@ if __name__ == '__main__':
     )
 
     # logger = TensorBoardLogger(outdir / "tb_logs", name=f"fold_{fold_num}_{args.model_type}_{args.comment}")
-    logger = WandbLogger(project="Discriminator", name=f"fold_{fold_num}_{args.comment}", 
-                         save_dir=outdir, log_model=True)
+    # logger = WandbLogger(project="Discriminator", name=f"fold_{fold_num}_{args.comment}", 
+    #                      save_dir=outdir, log_model=True)
 
     # Create the trainer
     trainer = L.Trainer(
-        logger=logger,
-        callbacks=[checkpoint_callback, early_stopping_callback],
+        # logger=logger,
         max_epochs=args.max_epochs,
         log_every_n_steps=5,
         check_val_every_n_epoch=1,
         gradient_clip_val=1.0,
         accumulate_grad_batches=args.accumulate_grad_batches,
         accelerator='gpu',
+        limit_train_batches=0.3, limit_val_batches=0.1,
         devices=1,)
     
     #limit_train_batches=0.1, limit_val_batches=0.01
@@ -161,21 +172,21 @@ if __name__ == '__main__':
         val_dataloaders=val_loader
         )
 
-    # Check best model's metrics
-    best_path = checkpoint_callback.best_model_path
-    checkpoint  = torch.load(best_path, map_location='cpu')
+    # # Check best model's metrics
+    # best_path = checkpoint_callback.best_model_path
+    # checkpoint  = torch.load(best_path, map_location='cpu')
 
-    metrics = {
-        "Validation Loss":     checkpoint['val_loss'],
-        "Validation Accuracy": checkpoint['val_accuracy'],
-        "Validation F1":       checkpoint['val_F1'],
-        "Validation AUROC":    checkpoint['val_AUROC'],
-    }
+    # metrics = {
+    #     "Validation Loss":     checkpoint['val_loss'],
+    #     "Validation Accuracy": checkpoint['val_accuracy'],
+    #     "Validation F1":       checkpoint['val_F1'],
+    #     "Validation AUROC":    checkpoint['val_AUROC'],
+    # }
 
-    col_w = 22
-    print("┌" + "─" * col_w + "┬" + "─" * 12 + "┐")
-    print(f"│ {'Metric':<{col_w - 2}} │ {'Value':<10} │")
-    print("├" + "─" * col_w + "┼" + "─" * 12 + "┤")
-    for name, val in metrics.items():
-        print(f"│ {name:<{col_w - 2}} │ {val:<10.4f} │")
-    print("└" + "─" * col_w + "┴" + "─" * 12 + "┘")
+    # col_w = 22
+    # print("┌" + "─" * col_w + "┬" + "─" * 12 + "┐")
+    # print(f"│ {'Metric':<{col_w - 2}} │ {'Value':<10} │")
+    # print("├" + "─" * col_w + "┼" + "─" * 12 + "┤")
+    # for name, val in metrics.items():
+    #     print(f"│ {name:<{col_w - 2}} │ {val:<10.4f} │")
+    # print("└" + "─" * col_w + "┴" + "─" * 12 + "┘")

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# evo_setup.sh — one-shot evo workspace initialisation for HierarchicalMIL
+# evo_setup.sh — one-shot evo workspace initialisation for MammothMIL
 #
 # Run once from your project root:
 #   bash /path/to/evo_setup.sh
@@ -71,7 +71,7 @@ evo env set EVO_NUM_WORKERS  "4"
 # ── project.md — the agent's authoritative scope document ────────────────────
 cat > .evo/project.md << 'MDEOF'
 ## Project
-IBD subtype classifier — UC vs CD — using HierarchicalMIL (Mixture of Experts).
+IBD subtype classifier — UC vs CD — using MammothMIL (Mixture of Experts).
 
 ## Score
 Macro AUROC over val set. Higher is better. 0.5 = random, baseline ≈ 0.72, target > 0.80.

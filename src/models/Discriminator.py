@@ -163,12 +163,13 @@ class MammothNet(nn.Module):
             h = h.squeeze(0)  # remove MoE expert dim if present (1, N, proj_dim) → (N, proj_dim)
 
         # 2) Additive MIL ─────────────────────────────────────────────
-        logits, attn_w, contribs, _ = self.mil(h, mask=mask)
+        logits, attn_w, contribs, bag_repr = self.mil(h, mask=mask)
 
         expert_out = ExpertOutput(
             logits=logits,
             attn_weights=attn_w,
-            contributions=contribs
+            contributions=contribs,
+            representation=bag_repr,
         )
 
         return expert_out
