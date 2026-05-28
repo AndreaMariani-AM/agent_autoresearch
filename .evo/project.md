@@ -1,5 +1,5 @@
 ## Project
-IBD subtype classifier — UC vs CD — using MammothMIL (Mixture of Experts).
+WSI classifier
 
 ## Score
 Macro AUROC over val set. Higher is better. 0.5 = random, baseline ≈ 0.75, target > 0.85.
