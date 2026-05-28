@@ -1,0 +1,36 @@
+# evo experiment runs (checkpoints, worktrees — machine-specific, can be large)
+.evo/run_*/
+.evo/benchmark.env
+.evo/keyfile
+.evo/inject/
+.evo/dashboard.pid
+.evo/dashboard.port
+
+# Claude Code memory (personal, not project-level)
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.so
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment
+.env
+*.env
+venv/
+.venv/
+
+# Data / model outputs (large files)
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.npy
+*.npz

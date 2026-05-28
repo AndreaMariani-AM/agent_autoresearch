@@ -28,7 +28,7 @@ SPLIT_CSV="/group/glastonbury/andrea/projects/IBD/IBD_predictive_model/data/fold
 
 # Proxy-run epochs per evo iteration — keep low for fast hill-climbing.
 # Raise to 50 (or set EVO_FULL_EVAL=1) for a final validation run.
-EVO_MAX_EPOCHS=15
+EVO_MAX_EPOCHS=10
 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -58,7 +58,7 @@ cd "$PROJECT_ROOT"
 # Metric:    val_auroc_macro — the extra field we write alongside "score".
 evo init \
     --target  "$TARGET_FILE" \
-    --benchmark "python {worktree}/evaluate.py --worktree {worktree} --out {worktree}/.evo_result.json" \
+    --benchmark "python {worktree}/evaluate.py --worktree {worktree} --out {worktree}/.evo_result.json >&2 && cat {worktree}/.evo_result.json" \
     --gate      "bash {worktree}/gate.sh {worktree}" \
     --metric    "max" \
     --host      "claude-code"
@@ -74,6 +74,12 @@ EVO_NUM_WORKERS=4
 ENVEOF
 
 evo env load --all .evo/benchmark.env
+
+# ── Runtime prefix ────────────────────────────────────────────────────────────
+# Must be set explicitly — evo init does not persist this, so it must be
+# re-applied every time the workspace is initialised from scratch.
+CONDA_ENV="/group/glastonbury/conda_envs/lazyslide.v0.9.3"
+evo config runtime set --prefix "conda run -p $CONDA_ENV"
 
 # ── project.md — the agent's authoritative scope document ────────────────────
 cat > .evo/project.md << 'MDEOF'
@@ -100,17 +106,16 @@ Macro AUROC over val set. Higher is better. 0.5 = random, baseline ≈ 0.75, tar
 
 ## Benchmark determinism
 Sampling-based — variance expected across runs. Seed is fixed per worktree
-via EVO_SEED (default 42) but stochastic training means ±0.01 AUROC noise
-is normal. Discard experiments that differ by < 0.03 from parent.
+via EVO_SEED (default 42) but stochastic training means ±0.005 AUROC noise
+is normal. Discard experiments that differ by < 0.01 from parent.
 
 ## Future experiment candidates
-- Contrastive auxiliary loss between UC/CD expert activations
-- Implementation of Contrstive MIL
-- All optimizers and hyperparameters
-- All activation functions
-- All architectural details: skip connections, number of layers, etc.
-- Different architectures
-- Different ways to aggregated patch features to slide level prediction
+- Different architectures for feature encoding. Right now is either a MLP of Mammoth (Mixture of Experts)for each patch. We can try different encoder architectures
+- Different ways to aggregated patch features to slide level prediction, right now is additive mil where we sum all contributions to create logits. We should explore different ways to aggregate to slide level
+# - Implementation of Contrstive MIL 
+# - All optimizers and hyperparameters
+# - All activation functions
+# - All architectural details: skip connections, number of layers, etc.
 MDEOF
 
 echo ""
