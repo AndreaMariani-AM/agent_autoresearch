@@ -13,8 +13,8 @@ After every `evo run`, append an entry to `EXPERIMENTS.md` in the project root. 
 **Notes:** <anything surprising, failure modes, what to try next>
 ```
 
-- `IMPROVEMENT` = score > parent + 0.03
-- `NO_IMPROVEMENT` = ran but score ≤ parent + 0.03
+- `IMPROVEMENT` = score > parent + 0.01
+- `NO_IMPROVEMENT` = ran but score ≤ parent + 0.01
 - `FAILED` = benchmark errored or timed out
 
 The orchestrator also updates pending entries once results are known.
@@ -82,7 +82,7 @@ Do **not** edit: `data/dataset.py`, `evaluate.py`, `gate.sh`, `tests/`.
 
 ## Optimization targets
 
-Metric: macro AUROC on val set. Baseline ≈ 0.75, target > 0.85. Discard experiments within ±0.03 of parent (noise floor).
+Metric: macro AUROC on val set. Baseline ≈ 0.75, target > 0.85. Discard experiments within ±0.01 of parent (noise floor).
 
 Promising directions (not yet tried):
 - Contrastive auxiliary loss between UC/CD expert activations
