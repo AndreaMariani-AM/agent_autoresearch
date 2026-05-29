@@ -2,6 +2,10 @@
 
 An autonomous experiment loop that iteratively improves a whole-slide image (WSI) classifier using the [evo](https://github.com/evo-hq/evo) optimisation framework and Claude Code as the agent backend.
 
+<p align="center">
+  <img src="evo_dashboard.png" width="780" alt="evo dashboard — experiment tree and score timeline">
+</p>
+
 ## What it does
 
 The system runs a hill-climbing optimisation loop over a MIL (Multiple Instance Learning) model for WSI classification. In each round, AI subagents propose and evaluate architectural or training changes — LR schedules, aggregation strategies, loss functions, encoder design — and the best-scoring variants are kept. The loop runs autonomously until a target metric is reached or the stall limit is hit.
