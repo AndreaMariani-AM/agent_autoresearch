@@ -224,3 +224,21 @@ Target: **> 0.85**
 **Notes:** Delta is only +0.0003 — well within the noise floor. Gradient did flow correctly (repr not detached), but the contrastive signal is too weak to move AUROC meaningfully. f1_macro unchanged at 0.661 (identical to exp_0020). The loss appears not to provide useful discriminative signal at lambda=0.1 or the EMA prototypes are converging to indistinct positions too quickly (alpha=0.9 is very fast). Directions to explore: stronger lambda (0.5+), slower EMA (alpha=0.99), triplet loss instead of cosine push, or dropping this auxiliary loss entirely and trying a fundamentally different approach (e.g. FocalLoss, class-balanced sampling, or deeper encoder).
 
 ---
+
+## exp_0026 — Three-Block Deep ResidualMLP Encoder (2560→1280→640→256)
+**Status:** NO_IMPROVEMENT
+**Score:** 0.7992 AUROC  (parent: 0.8226, Δ=−0.023)
+**Parent:** exp_0025
+**What changed:** `src/models/Discriminator.py` — added `ThreeBlockResidualEncoder` stacking three `ResidualMLP` blocks: block1=ResidualMLP(2560,1280,1280), block2=ResidualMLP(1280,640,640), block3=ResidualMLP(640,320,256). Replaced `DeepResidualEncoder` in `MammothNet`. ABMIL aggregator and warmup/cosine LR unchanged from exp_0025.
+**Notes:** Regression (−0.023) — adding a third block hurt vs the 2-block best. Depth plateau confirmed: 1-block→0.795, 2-block→0.823, 3-block→0.799. The additional compression (2560→1280→640→256) introduces over-compression that degrades representation quality. val_loss dropped (0.932→0.641) as with the transformer, suggesting the deeper encoder over-fits to calibration at the expense of ranking. evo marked as `failed` due to 2h benchmark timeout (training completed but evo killed the process at exactly 7200s before reading the result file — score from `.evo_result.json`). Fix: use `--timeout 10800` for future runs. Sweet spot for this task appears to be the 2-block encoder (exp_0025). Next: explore encoder modifications on the 2-block base (activation function, dropout, output_dim) or auxiliary loss improvements.
+
+---
+
+## exp_0027 — Standard CLS-token transformer aggregator on DeepResidualEncoder (no RoPE)
+**Status:** NO_IMPROVEMENT
+**Score:** 0.7999 AUROC  (parent: 0.8226)
+**Parent:** exp_0025
+**What changed:** `src/models/Discriminator.py` — added `SimpleCLSTransformer` class (pre-norm `norm_first=True`, 2-layer, 4-head, `dim_feedforward=input_dim*4`, GELU, `batch_first=True`, CLS token init `trunc_normal_(std=0.02)`) and replaced `ABMILAggregator` with it in `MammothNet`. `DeepResidualEncoder` (2560→1280→256) and warmup+cosine LR schedule unchanged from exp_0025.
+**Notes:** Clear regression (−0.022). CLS transformer peaked at epoch 9 (AUROC=0.7999, val_loss=0.655, f1_macro=0.679) and did not improve through epoch 20. Consistent with exp_0016/exp_0018 (RoPE transformer ~0.776-0.779) — CLS transformers consistently underperform ABMIL in this MIL AUROC task. Lower val_loss (0.655 vs parent 0.932) shows better calibration but worse slide-level ranking, confirming ABMIL's attention mechanism is better suited for ranking in WSI MIL. All 3 attempts showed the same ceiling (~0.79-0.80 AUROC). ABMIL remains the superior aggregator; next directions should focus on improving the encoder or auxiliary loss rather than replacing ABMIL.
+
+---

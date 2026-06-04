@@ -53,7 +53,7 @@ Without this, `evaluate.py` runs under the system Python (no torch → `ModuleNo
 - **Track progress via log files**, not CLI stdout. The benchmark log is at:
   `.evo/run_0001/experiments/<exp_id>/attempts/<n>/benchmark.log`
   and errors at `benchmark_err.log`.
-- **Use a long timeout.** Always pass `--timeout 7200` to `evo run` (2 hours). The default is 30 min which is not enough for 10+ epochs (~40 min per run). Use `run_in_background=true` and poll the log file.
+- **Use a long timeout.** Always pass `--timeout 10800` to `evo run` (3 hours). When 2 jobs run in parallel they compete for NFS I/O and each takes ~100 min instead of ~60 min; 7200s is not enough. Use `run_in_background=true` and poll the log file.
 - **`max_attempts` is 3.** Each failed `evo run` consumes one attempt. If an experiment has used all 3, discard it and create a new one with `evo new`.
 
 ## Baseline setup
