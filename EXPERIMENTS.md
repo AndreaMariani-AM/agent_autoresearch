@@ -170,3 +170,57 @@ Target: **> 0.85**
 **Notes:** New best at +0.027 over baseline (above 0.01 threshold). val_loss=0.864 is high (worse than exp_0016's 0.834 and baseline 0.576), suggesting the residual encoder with cosine LR hasn't converged well despite the schedule. f1_macro=0.771. The skip connection adds a direct pathway from raw projected features to the MIL aggregator. High val_loss vs AUROC gain is an interesting decoupling — the model ranks correctly even without low loss. Priority next: stack ResidualMLP with ABMIL aggregator, or add ABMIL on top of this residual encoder.
 
 ---
+
+## exp_0021 — EMA Prototype Contrastive Loss on Bag Representations
+**Status:** NO_IMPROVEMENT
+**Score:** 0.7955 AUROC (parent: 0.7955, Δ=0.000)
+**Parent:** exp_0019
+**What changed:** `src/training/trainer.py` — added EMA class prototype buffer (`_proto`, shape 2×repr_dim) and contrastive auxiliary loss: at each training step, push bag embedding away from opposite-class running mean via cosine similarity. lambda=0.1, EMA alpha=0.9.
+**Notes:** Score exactly equal to parent — the contrastive loss had zero effect. Root cause: `repr` was detached before computing `F.cosine_similarity`, so no gradient flowed back through the bag representation. The EMA updates and loss value changed numerically, but the backward pass was identical to plain cross-entropy. Fix: use undetached `repr` on the left side of `cosine_similarity` (only detach the prototype buffer, not the query). Should retry corrected version on exp_0020 (ResidualMLP+ABMIL) as the parent.
+
+---
+
+## exp_0020 — ResidualMLP Encoder + ABMIL Gated Attention Aggregator
+**Status:** IMPROVEMENT
+**Score:** 0.8089 AUROC (parent: 0.7955, Δ=+0.013)
+**Parent:** exp_0019
+**What changed:** `src/models/Discriminator.py` — added `ABMILAggregator` class (gated attention: V/U projections, tanh(V)·sigmoid(U) gating, softmax attention, weighted bag embedding, linear head) and replaced `ClassConditionalAdditiveMIL` with it in `MammothNet`. Residual encoder and warmup/cosine LR schedule inherited unchanged from exp_0019.
+**Notes:** New best at 0.8089. Stacking the two individually-proven changes (ResidualMLP encoder from exp_0019 + ABMIL from exp_0017) produced additive gains: +0.027 + ~0.013 ≈ +0.040 total over baseline. val_loss=0.887 is high but AUROC is the metric; f1_macro=0.661 (lower than exp_0019's 0.771, unusual). The residual encoder + ABMIL combination is the new best architecture. Target is >0.85; we are at 0.809 — still 0.041 to go. Next: contrastive auxiliary loss on this architecture, or deeper/wider variants.
+
+---
+
+## exp_0023 — FocalLoss on Binary Path (null change)
+**Status:** NO_IMPROVEMENT
+**Score:** N/A (discarded — null change)
+**Parent:** exp_0020
+**What changed:** `src/training/trainer.py` — replaced `nn.BCEWithLogitsLoss` with `FocalLoss(gamma=2)` in the n_classes=1 binary branch. Model uses n_classes=2; the edited branch is never reached.
+**Notes:** Dead edit. FocalLoss in losses.py uses binary_cross_entropy_with_logits and only applies to n_classes=1. Our classifier is multi-class (n_classes=2), so CrossEntropyLoss in the else-branch was unchanged. evo run process also died silently mid-attempt; force-discarded.
+
+---
+
+## exp_0024 — Multi-class Softmax Focal Loss (gamma=2)
+**Status:** NO_IMPROVEMENT
+**Score:** 0.7927 AUROC (parent: 0.8089, Δ=−0.016)
+**Parent:** exp_0020
+**What changed:** `src/training/trainer.py` — replaced `nn.CrossEntropyLoss()` with inline softmax focal loss in the n_classes>1 branch: `ce = F.cross_entropy(logits, label.long(), reduction='none'); pt = torch.exp(-ce); loss = ((1-pt)**2 * ce).mean()`. Same change applied in validation_step.
+**Notes:** Regression (−0.016). Surprisingly, val_loss dropped dramatically (0.887 → 0.406) — focal loss improved calibration — but AUROC fell. This suggests focal loss shifts the model toward lower-entropy predictions at the cost of ranking quality. The model becomes more "confident" but ranks slides less accurately. Focal loss is not suited to this MIL AUROC-optimisation task; the model benefits from soft, less-confident distributions for ranking.
+
+---
+
+## exp_0025 — Two-Block Deep ResidualMLP Encoder (2560→1280→256, two skip connections)
+**Status:** IMPROVEMENT
+**Score:** 0.8226 AUROC (parent: 0.8089, Δ=+0.014)
+**Parent:** exp_0020
+**What changed:** `src/models/Discriminator.py` — added `DeepResidualEncoder` class stacking two `ResidualMLP` blocks: block1 = ResidualMLP(2560, 1280, 1280) and block2 = ResidualMLP(1280, 640, 256). Replaced single `ResidualMLP` encoder in `MammothNet` with `DeepResidualEncoder(in_features=2560, mid_features=1280, out_features=256)`. ABMIL aggregator and warmup/cosine LR unchanged from exp_0020.
+**Notes:** New best at 0.8226. Deeper encoder continues to improve AUROC additively — each extra residual stage adds ~+0.013. Notably, f1_macro recovered strongly (0.661 → 0.752), suggesting the deeper encoder produces better-separated class representations. val_loss increased (0.887 → 0.932) — the deeper model is harder to calibrate but ranks well. Gap to target (>0.85) is now 0.027. Next: three-block encoder, or try a different aggregation strategy on top of DeepResidualEncoder.
+
+---
+
+## exp_0022 — Contrastive EMA Prototype Loss (gradient flow fixed)
+**Status:** NO_IMPROVEMENT
+**Score:** 0.8092 AUROC  (parent: 0.8089)
+**Parent:** exp_0020
+**What changed:** `src/training/trainer.py` — added EMA prototype contrastive loss with corrected gradient flow: `self.model(features)` (returns full ExpertOutput) replaces `self(features)` in `training_step` so that `.representation` has attached gradients. `repr_raw` is passed undetached to `F.cosine_similarity`; only the EMA buffer update uses `.detach()`. lambda=0.1, alpha=0.9. Parent architecture (ResidualMLP + ABMILAggregator + warmup/cosine LR) unchanged.
+**Notes:** Delta is only +0.0003 — well within the noise floor. Gradient did flow correctly (repr not detached), but the contrastive signal is too weak to move AUROC meaningfully. f1_macro unchanged at 0.661 (identical to exp_0020). The loss appears not to provide useful discriminative signal at lambda=0.1 or the EMA prototypes are converging to indistinct positions too quickly (alpha=0.9 is very fast). Directions to explore: stronger lambda (0.5+), slower EMA (alpha=0.99), triplet loss instead of cosine push, or dropping this auxiliary loss entirely and trying a fundamentally different approach (e.g. FocalLoss, class-balanced sampling, or deeper encoder).
+
+---

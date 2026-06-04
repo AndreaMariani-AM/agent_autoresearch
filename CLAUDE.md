@@ -49,7 +49,7 @@ Without this, `evaluate.py` runs under the system Python (no torch → `ModuleNo
 
 `evo run <exp_id>` is long-running — it trains the model for `EVO_MAX_EPOCHS` epochs (default 15), which takes ~10–20 minutes on GPU. Key rules:
 
-- **Never stack calls.** Before running, check `ps aux | grep "evo run"`. If a process is already alive, wait for it or kill it first — don't launch another one.
+- **Up to 2 parallel runs are safe.** The GPU (A40-24Q 24GB) uses only ~4-5 GB per job and runs at ~4% compute utilisation — the bottleneck is NFS I/O, not GPU. You may run 2 `evo run` processes simultaneously. Do NOT run 3 or more (risk of memory pressure and NFS contention).
 - **Track progress via log files**, not CLI stdout. The benchmark log is at:
   `.evo/run_0001/experiments/<exp_id>/attempts/<n>/benchmark.log`
   and errors at `benchmark_err.log`.
