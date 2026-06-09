@@ -57,22 +57,6 @@ Input features are pre-extracted hierarchical Virchow2 embeddings (256×256 patc
 | Subagents / round | 2 |
 | Stall limit | 4 consecutive rounds with no improvement |
 
-## Results so far
-
-| Exp | Change | AUROC | Δ | Status |
-|---|---|---|---|---|
-| exp_0003 | Baseline (10 epochs) | 0.768 | — | BASELINE |
-| exp_0004 | Warmup + cosine LR schedule | 0.784 | +0.016 | **IMPROVEMENT** |
-| exp_0005 | ABMIL aggregation (from baseline) | 0.776 | +0.008 | no improvement |
-| exp_0006 | Softer cosine floor + 2-epoch warmup | 0.784 | +0.000 | no improvement |
-| exp_0007 | ABMIL + LR schedule (stacked) | 0.789 | +0.005 | no improvement |
-| exp_0008 | Label smoothing 0.1 | 0.786 | −0.003 | no improvement |
-| exp_0009 | Higher LR 3e-4 | 0.778 | −0.011 | no improvement |
-| exp_0010 | LayerNorm on patch embeddings | running | — | — |
-| exp_0011 | Wider projection output_dim=512 | running | — | — |
-
-Full notes in [EXPERIMENTS.md](EXPERIMENTS.md).
-
 ## Repository layout
 
 ```
