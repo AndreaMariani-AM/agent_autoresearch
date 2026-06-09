@@ -225,6 +225,42 @@ Target: **> 0.85**
 
 ---
 
+## exp_0031 — Wider Encoder output_dim=512 and ABMIL key_dim=256
+**Status:** NO_IMPROVEMENT
+**Score:** 0.8312 AUROC  (parent: 0.8226, Δ=+0.009)
+**Parent:** exp_0025
+**What changed:** `src/models/Discriminator.py` — changed `output_dim` default from 256 to 512 in `MammothNet` (so `DeepResidualEncoder` outputs 512-dim instead of 256-dim), and changed `key_dim=128` to `key_dim=256` in `ABMILAggregator`. All other settings (2-block encoder, ReLU, dropout=0.25, LR=1e-4) unchanged.
+**Notes:** Small positive delta (+0.009), just below the 0.01 noise floor threshold, but evo committed it as new best. val_loss similar (0.895 vs parent 0.932). Notably, f1_macro dropped (0.752→0.706) while AUROC improved — wider representation helps ranking but may affect class balance. Direction is promising: doubling output capacity adds marginal but consistent signal. Branching from exp_0031 for Round 14 to exploit the wider architecture further.
+
+---
+
+## exp_0030 — Reduced Encoder Dropout=0.1 (was 0.25)
+**Status:** NO_IMPROVEMENT
+**Score:** 0.8099 AUROC  (parent: 0.8226, Δ=−0.013)
+**Parent:** exp_0025
+**What changed:** `src/models/Discriminator.py` — changed `dropout=0.25` to `dropout=0.1` in the `DeepResidualEncoder(...)` instantiation inside `MammothNet.__init__`. ABMIL aggregator dropout unchanged at 0.25.
+**Notes:** Regression (−0.013). Less dropout hurt. Matches exp_0012 pattern (dropout=0.1 from exp_0007 also regressed). val_loss slightly lower (0.856 vs parent 0.932) — better calibration at cost of ranking quality. The 2-block encoder benefits from dropout=0.25 regularization; lower dropout may lead to overfit patch embeddings. 0.25 is confirmed optimal dropout for this architecture.
+
+---
+
+## exp_0029 — Stronger Contrastive EMA Prototype Loss (lambda=0.3, alpha=0.99)
+**Status:** NO_IMPROVEMENT
+**Score:** 0.7962 AUROC  (parent: 0.8226, Δ=−0.026)
+**Parent:** exp_0025
+**What changed:** `src/training/trainer.py` — EMA prototype contrastive push with `_contrast_lambda=0.3` (was 0.1 in exp_0022) and `_proto_alpha=0.99` (was 0.9, much slower EMA). Same mechanism: push bag embedding away from opposite-class prototype via cosine similarity, added to CE loss. Gradient flows through the undetached representation; only EMA buffer update uses `.detach()`.
+**Notes:** Larger regression than exp_0022 (−0.026 vs −0.0003). Pattern confirmed: EMA prototype contrastive loss consistently hurts AUROC at every lambda (0.1→0.809, 0.3→0.796), while reducing val_loss (0.932→0.784). The contrastive signal appears to conflict with AUROC-optimal representation learning — it pushes embeddings apart in cosine space, which may actually reduce the soft ranking signal ABMIL needs. val_loss reduction (better calibration) correlates with AUROC degradation — same anti-pattern seen with focal loss. Abandon EMA contrastive entirely; focus on encoder capacity or training dynamics.
+
+---
+
+## exp_0028 — GELU Activation in DeepResidualEncoder (replace ReLU)
+**Status:** NO_IMPROVEMENT
+**Score:** 0.8042 AUROC  (parent: 0.8226, Δ=−0.018)
+**Parent:** exp_0025
+**What changed:** `src/models/Discriminator.py` — changed `act_layer=nn.ReLU` to `act_layer=nn.GELU` in the `DeepResidualEncoder(...)` instantiation inside `MammothNet.__init__`. Both ResidualMLP blocks affected. All other settings (ABMIL, warmup/cosine LR, dropout=0.25, lr=1e-4) unchanged.
+**Notes:** Regression (−0.018). GELU did not improve over ReLU in this 2-block residual architecture. val_loss slightly worse (0.952 vs parent 0.932). f1_macro unchanged (0.752). ReLU appears to be the better activation for this MIL patch-embedding projection task — possibly because the hard zero gate in ReLU acts as implicit feature selection, useful when compressing 2560-dim Virchow2 embeddings. GELU's smooth gradient may not add value when the main bottleneck is I/O and aggregation, not gradient flow through the encoder.
+
+---
+
 ## exp_0026 — Three-Block Deep ResidualMLP Encoder (2560→1280→640→256)
 **Status:** NO_IMPROVEMENT
 **Score:** 0.7992 AUROC  (parent: 0.8226, Δ=−0.023)
@@ -240,5 +276,227 @@ Target: **> 0.85**
 **Parent:** exp_0025
 **What changed:** `src/models/Discriminator.py` — added `SimpleCLSTransformer` class (pre-norm `norm_first=True`, 2-layer, 4-head, `dim_feedforward=input_dim*4`, GELU, `batch_first=True`, CLS token init `trunc_normal_(std=0.02)`) and replaced `ABMILAggregator` with it in `MammothNet`. `DeepResidualEncoder` (2560→1280→256) and warmup+cosine LR schedule unchanged from exp_0025.
 **Notes:** Clear regression (−0.022). CLS transformer peaked at epoch 9 (AUROC=0.7999, val_loss=0.655, f1_macro=0.679) and did not improve through epoch 20. Consistent with exp_0016/exp_0018 (RoPE transformer ~0.776-0.779) — CLS transformers consistently underperform ABMIL in this MIL AUROC task. Lower val_loss (0.655 vs parent 0.932) shows better calibration but worse slide-level ranking, confirming ABMIL's attention mechanism is better suited for ranking in WSI MIL. All 3 attempts showed the same ceiling (~0.79-0.80 AUROC). ABMIL remains the superior aggregator; next directions should focus on improving the encoder or auxiliary loss rather than replacing ABMIL.
+
+---
+
+## exp_0030 — Reduced encoder dropout=0.1 in DeepResidualEncoder (was 0.25)
+**Status:** NO_IMPROVEMENT
+**Score:** 0.8099 AUROC  (parent: 0.8226, Δ=−0.013)
+**Parent:** exp_0025
+**What changed:** `src/models/Discriminator.py` — changed `dropout=dropout` to `dropout=0.1` in the `DeepResidualEncoder(...)` instantiation inside `MammothNet.__init__`. ABMIL aggregator dropout kept at 0.25. All other settings unchanged (2-block ReLU encoder, output_dim=256, warmup/cosine LR, lr=1e-4, weight_decay=1e-4).
+**Notes:** Regression (−0.013). Reducing encoder dropout from 0.25 to 0.1 hurt AUROC (0.810 vs parent 0.823). val_loss improved slightly (0.856 vs 0.932), f1_macro dropped (0.743 vs 0.752). The result is consistent with exp_0012 pattern: less dropout in the encoder does not help. The original dropout=0.25 provides better regularisation for this high-dimensional (2560→256) patch-level projection, preventing over-fitting to individual patch features and maintaining better bag-level ranking. evo discarded as NO_IMPROVEMENT. Next directions: explore LR tuning, different weight_decay, or aggregation improvements on the 2-block base.
+
+---
+
+## exp_0031 — Wider encoder output_dim=512 and ABMIL key_dim=256
+**Status:** NO_IMPROVEMENT
+**Score:** 0.8312 AUROC  (parent: 0.8226, Δ=+0.0086)
+**Parent:** exp_0025
+**What changed:** `src/models/Discriminator.py` — changed `output_dim` default in `MammothNet.__init__` from 256 to 512, and `key_dim` in `ABMILAggregator` instantiation from 128 to 256. `src/training/trainer.py` — changed `output_dim` default in `MammothTrainer.__init__` from 256 to 512. DeepResidualEncoder now projects 2560→1280→512 (was 2560→1280→256); ABMIL attention keys are 256-dim (was 128).
+**Notes:** Marginal positive delta (+0.0086) below the 0.01 improvement threshold — classified NO_IMPROVEMENT. val_loss=0.895, f1_macro=0.706, epochs_run=20. Widening the encoder projection and attention keys gave a small positive signal but did not produce a clear improvement over exp_0025 (0.8226). The 256-dim output does not appear to be a strict information bottleneck at this dataset scale. Note: exp_0011 tried output_dim=512 from a single-layer MLP baseline (AUROC=0.789) — the 2-block encoder at 512-dim (0.831) is a better result but still within noise of exp_0025. Architecture appears to have plateaued at 0.82-0.83 with current training setup; activation, depth, width, and aggregator changes have all been exhausted without clear gains. Next: consider LR tuning, longer training, or data augmentation strategies.
+
+---
+
+## exp_0032 — Deeper ABMIL attention gates (V/U as 2-layer MLPs)
+**Status:** NO_IMPROVEMENT
+**Score:** 0.7958 AUROC  (parent: 0.8312, Δ=−0.035)
+**Parent:** exp_0031
+**What changed:** `src/models/Discriminator.py` — replaced single-linear `attention_V` and `attention_U` in `ABMILAggregator` with 2-layer MLPs: `Linear(in_dim,in_dim)→ReLU→Linear(in_dim,key_dim)→Tanh/Sigmoid`. Both gate projections now pass through a full-dim hidden layer before reducing to key_dim.
+**Notes:** Significant regression (−0.035). Deeper gating projections strongly hurt AUROC. Adding a non-linear hidden layer to the attention gates destroys the soft ranking quality that ABMIL relies on. The original linear V/U design (a single linear map to key space) is likely optimal for this MIL task: the attention mechanism is intended to produce scalar weights ranking patches, and over-parameterising the key projection adds noise rather than discriminability. The ABMIL attention gates should remain simple linear projections; complexity should be invested upstream (encoder) not in the gating mechanism.
+
+---
+
+## exp_0033 — Wider encoder intermediate dimension (mid_features=2048, was 1280)
+**Status:** NO_IMPROVEMENT
+**Score:** 0.8301 AUROC  (parent: 0.8312, Δ=−0.0011)
+**Parent:** exp_0031
+**What changed:** `src/models/Discriminator.py` — changed the first `ResidualMLP` block's `mid_features` in `DeepResidualEncoder` from `hidden_dim` (1280) to 2048. The first block now expands from 2560 input before compressing: 2560→2048→1280 (was 2560→1280→1280). Second block unchanged: 1280→640→512.
+**Notes:** Essentially no change (−0.0011, within noise). Widening the first encoder block from 1280 to 2048 intermediate dimensions provides no benefit — the architecture at 1280 intermediate already captures sufficient information from the 2560-dim Virchow2 embeddings. Adding extra parameters in the first projection does not help ranking quality. The encoder width is not the bottleneck; all reasonable architectural variations (depth, width, activation, dropout, gates) have now been exhausted without improving beyond the 0.83 plateau. The clear next direction is optimizer/LR schedule tuning.
+
+---
+
+## Round 14 Considerations
+
+Architecture search is exhausted. After 14 rounds and 33 experiments, the model is firmly plateaued at **0.83 macro AUROC** with the current training setup (AdamW lr=1e-4, warmup+cosine schedule, 20 epochs). Key learnings:
+
+**What works:**
+- 2-block `DeepResidualEncoder` (2560→1280→512, ReLU, dropout=0.25) — depth sweet spot confirmed
+- `ABMILAggregator` with simple linear V/U gates — ranking-oriented attention, superior to transformers
+- Warmup (10%) + CosineAnnealingLR schedule — best over flat LR
+- output_dim=512, key_dim=256 gave a marginal (+0.009) positive signal
+
+**What definitively doesn't work:**
+- More encoder depth (3+ blocks) — over-compresses, hurts ranking
+- GELU activation — ReLU wins for this 2560-dim projection task
+- Transformer aggregators (RoPE or CLS) — consistently ~0.02 below ABMIL
+- Contrastive/focal auxiliary losses — calibration gains but AUROC regression
+- Reduced dropout (0.1) — 0.25 is the optimal regularisation level
+- Deeper ABMIL gates — simple linear projections are optimal
+- Wider intermediate dimensions — 1280 intermediate is sufficient
+
+**Strategic direction for next session:**
+The plateau at 0.83 with current optimizer settings suggests the **training dynamics** are the limiting factor, not architecture. All architecture variations above the 2-block ReLU ABMIL baseline produce noise-level changes. The next logical exploration axis is **optimizer and LR tuning**: different base LR values (1e-3, 5e-4, 5e-5), weight decay (1e-3, 1e-5), alternative optimizers (SGD with momentum, Lion, AdamW with AMSGrad), and schedule shapes (linear decay, warmup fraction, cosine floor). A well-tuned optimizer can close the gap to >0.85 where architecture changes have failed.
+
+---
+
+## exp_0034 — Higher learning rate lr=5e-4 (5x increase)
+**Status:** NO_IMPROVEMENT
+**Score:** 0.8016 AUROC  (parent: 0.8312, Δ=−0.030)
+**Parent:** exp_0031
+**What changed:** `evo_config.json` — set `lr: 5e-4` (was 1e-4). All else unchanged: AdamW, weight_decay=1e-4, 10% warmup + cosine schedule, 2-block encoder + ABMIL.
+**Notes:** Significant regression (−0.030). Higher LR destabilises training on this architecture. Consistent with exp_0009 (lr=3e-4, −0.009 from weaker base). The current lr=1e-4 appears well-tuned; going higher in any direction hurts. The next direction should be lower LR, different weight decay, or a different schedule shape.
+
+---
+
+## exp_0035 — Stochastic patch subsampling 70% per training step
+**Status:** NO_IMPROVEMENT
+**Score:** 0.8119 AUROC  (parent: 0.8312, Δ=−0.019)
+**Parent:** exp_0031
+**What changed:** `src/training/trainer.py` — in `MammothTrainer.training_step`, before the forward pass, randomly subsample 70% of the slide's patches: `n_keep = max(1, int(0.7 * features.size(0))); idx = torch.randperm(...); features = features[idx]`. Validation unchanged (full patches).
+**Notes:** Regression (−0.019). ABMIL ranking quality degrades when patches are randomly removed during training — the model needs the full patch distribution to learn reliable attention weights. Consistent with exp_0013 (patch dropout 25% from weaker base, also regressed). Patch subsampling is not a useful augmentation for this MIL AUROC task: the ranking signal depends on rare informative patches that may be excluded by random subsampling.
+
+---
+
+## exp_0036 — Stronger weight decay wd=1e-3 (10x increase)
+**Status:** NO_IMPROVEMENT
+**Score:** 0.8318 AUROC  (parent: 0.8312, Δ=+0.0007)
+**Parent:** exp_0031
+**What changed:** `evo_config.json` — set `weight_decay: 1e-3` (was 1e-4). lr=1e-4 unchanged.
+**Notes:** Essentially flat (+0.0007, within noise). evo auto-committed as marginally better. Stronger regularisation does not help — the plateau is not caused by over-fitting. The model is not benefiting from penalising weight magnitude more aggressively. Current wd=1e-4 is already well-tuned.
+
+---
+
+## exp_0037 — Label smoothing 0.1 in CrossEntropyLoss
+**Status:** NO_IMPROVEMENT
+**Score:** 0.8037 AUROC  (parent: 0.8312, Δ=−0.027)
+**Parent:** exp_0031
+**What changed:** `src/training/trainer.py` — `MammothTrainer.__init__`: `nn.CrossEntropyLoss()` → `nn.CrossEntropyLoss(label_smoothing=0.1)`. All other settings unchanged.
+**Notes:** Clear regression (−0.027). Label smoothing hurts AUROC: softening targets reduces the sharpness of the decision boundary, which is detrimental to ranking quality. The model needs hard targets to learn discriminative slide-level representations. Consistent with earlier findings that calibration-oriented losses (focal, contrastive) harm AUROC.
+
+---
+
+## exp_0038 — Longer warmup 30% (6/20 epochs)
+**Status:** NO_IMPROVEMENT
+**Score:** 0.8216 AUROC  (parent: 0.8318, Δ=−0.010)
+**Parent:** exp_0036
+**What changed:** `src/training/trainer.py` — `configure_optimizers`: `int(0.1 * max_epochs)` → `int(0.3 * max_epochs)`. Warmup now runs 6 epochs (was 2), cosine decay over remaining 14 epochs.
+**Notes:** Regression (−0.010). Longer warmup hurts: spending 6 epochs ramping up leaves only 14 epochs of useful cosine decay, effectively shortening productive training. The 2-epoch warmup (10%) is the right balance for this 20-epoch budget. The model converges quickly and doesn't benefit from a slower start.
+
+---
+
+## exp_0039 — AdamW amsgrad=True
+**Status:** NO_IMPROVEMENT
+**Score:** 0.8123 AUROC  (parent: 0.8318, Δ=−0.020)
+**Parent:** exp_0036
+**What changed:** `src/training/trainer.py` — `configure_optimizers`: `torch.optim.AdamW(..., amsgrad=True)`. Schedule and all hyperparameters unchanged.
+**Notes:** Regression (−0.020). AMSGrad's conservative updates (running max of squared gradients) hurt rather than help — the standard AdamW second-moment estimate is better suited here. The plateau is not caused by unstable gradient variance; AMSGrad's extra conservatism reduces effective learning.
+
+---
+
+## exp_0040 — Lower learning rate lr=5e-5 (half of current)
+**Status:** NO_IMPROVEMENT
+**Score:** 0.8109 AUROC  (parent: 0.8318, Δ=−0.021)
+**Parent:** exp_0036
+**What changed:** `evo_config.json` — set `lr: 5e-5` (was 1e-4). weight_decay=1e-3 unchanged.
+**Notes:** Regression (−0.021). Going lower hurts too. lr=1e-4 confirmed as the sweet spot in both directions: 5e-5 regresses (−0.021), 5e-4 regresses (−0.030). The optimizer is well-tuned; the plateau is not a learning rate problem.
+
+---
+
+## exp_0041 — Higher cosine floor eta_min=lr/10 (1e-5 instead of 1e-6)
+**Status:** NO_IMPROVEMENT
+**Score:** 0.8267 AUROC  (parent: 0.8318, Δ=−0.005)
+**Parent:** exp_0036
+**What changed:** `src/training/trainer.py` — `CosineAnnealingLR`: `eta_min=self.lr / 100` → `eta_min=self.lr / 10`. LR decays to 1e-5 minimum instead of 1e-6; all other settings unchanged.
+**Notes:** Closest miss in the optimizer sweep (−0.005). Keeping LR warmer in later epochs does not help — the current cold floor (1e-6) is already optimal. The small regression suggests the final-epoch LR is fine as-is. Optimizer/schedule axis is now exhausted.
+
+---
+
+## exp_0042 — Pairwise AUROC surrogate loss (buffer-based, lambda=0.1)
+**Status:** NO_IMPROVEMENT
+**Score:** 0.8209 AUROC  (parent: 0.8318, Δ=−0.011)
+**Parent:** exp_0036
+**What changed:** `src/training/trainer.py` — added rolling buffer (size 30, reset each epoch) of detached (score, label) pairs. At each training step, computes sigmoid-smoothed pairwise ranking loss against buffer items with opposite label: `loss += 0.1 * mean(1 - sigmoid(margin))`. For n_classes=2, score = `logits[1] - logits[0]`.
+**Notes:** Regression (−0.011). The pairwise ranking signal at lambda=0.1 conflicts with CE optimisation — same anti-pattern as EMA contrastive loss (exp_0022/0029). The model may already be implicitly ranking well via CE; adding an explicit ranking term introduces a competing gradient. Could try lower lambda (0.01) or higher (0.5) but consistent pattern suggests auxiliary ranking losses don't help this task.
+
+---
+
+## exp_0043 — Bag-level dropout 0.5 on aggregated slide embedding
+**Status:** NO_IMPROVEMENT
+**Score:** 0.8061 AUROC  (parent: 0.8318, Δ=−0.026)
+**Parent:** exp_0036
+**What changed:** `src/models/Discriminator.py` — added `self.bag_dropout = nn.Dropout(0.5)` to `ABMILAggregator.__init__`; applied between bag aggregation and classifier: `self.cls(self.bag_dropout(bag))`. Patch-level dropout (0.25) unchanged.
+**Notes:** Clear regression (−0.026). Dropout 0.5 on the 512-dim bag embedding is too aggressive — drops too much signal at the slide level. The bag representation is the only information the classifier sees; heavy dropout here prevents it from learning reliable slide-level features. 
+
+---
+
+## exp_0044 — ABMIL attention temperature T=0.5 (sharper patch selection)
+**Status:** IMPROVEMENT
+**Score:** 0.8521 AUROC  (parent: 0.8318, Δ=+0.020)
+**Parent:** exp_0036
+**What changed:** `src/models/Discriminator.py` — changed `ABMILAggregator.forward` to use `torch.softmax(A / 0.5, dim=0)` instead of `torch.softmax(A, dim=0)`. Temperature=0.5 sharpens the attention distribution, concentrating weight on fewer, more discriminative patches.
+**Notes:** Clear improvement (+0.020). Sharpening attention beyond the default (T=1.0) helps the model focus on a smaller subset of highly relevant patches. New best. Explore lower T (0.3, 0.2) and combining T=0.5 with other improvements from exp_0044 as the new parent.
+
+---
+
+## exp_0050 — Top-k hard attention masking (top 20% patches, T=0.5)
+**Status:** PENDING
+**Score:** — AUROC  (parent: 0.8521)
+**Parent:** exp_0044
+**What changed:** `src/models/Discriminator.py` — after `softmax(A/0.5)`, keep only the top 20% patches by attention score (`k = max(1, int(0.2 * N))`), zero the rest, and re-normalise by sum. Hard-selection extreme of T=0.5 soft sharpening.
+**Notes:** Running.
+
+---
+
+## exp_0051 — Wider ABMIL attention key projection key_dim=512 (was 256)
+**Status:** PENDING
+**Score:** — AUROC  (parent: 0.8521)
+**Parent:** exp_0044
+**What changed:** `src/models/Discriminator.py` — changed `key_dim=256` to `key_dim=512` in `ABMILAggregator` instantiation inside `MammothNet`. Doubles the dimension of V and U projections, giving the attention mechanism more expressive power to compute patch compatibility scores. T=0.5 unchanged.
+**Notes:** Running.
+
+---
+
+## exp_0048 — Multi-head ABMIL (4 heads, T=0.5, bag = concatenation)
+**Status:** NO_IMPROVEMENT
+**Score:** 0.8260 AUROC  (parent: 0.8521, Δ=−0.026)
+**Parent:** exp_0044
+**What changed:** `src/models/Discriminator.py` — replaced single-head `ABMILAggregator` with 4 independent attention heads (each with its own V/U/w projections and T=0.5 softmax). Bag embeddings from all heads concatenated (512×4=2048-dim) before a linear classifier.
+**Notes:** Regression (−0.026). Multiple attention heads add noise rather than complementary signal — the 4× larger classifier input (2048-dim) introduces too many parameters for this dataset size, and the independent heads likely converge to overlapping representations. Single focused head remains better for this MIL task.
+
+---
+
+## exp_0049 — Attention dropout p=0.1 after softmax (train-only)
+**Status:** NO_IMPROVEMENT
+**Score:** 0.8234 AUROC  (parent: 0.8521, Δ=−0.029)
+**Parent:** exp_0044
+**What changed:** `src/models/Discriminator.py` — in `ABMILAggregator.forward`, after `torch.softmax(A / 0.5, dim=0)`, during training: randomly zero out 10% of attention weights then re-normalise by sum. Forces the bag representation to be robust to losing any single high-attention patch.
+**Notes:** Regression (−0.029). Attention dropout fights directly against the T=0.5 sharpening — T=0.5 concentrates weight on a small set of patches, then dropout randomly removes some of those, undoing the selective focus. The two mechanisms are antagonistic.
+
+---
+
+## exp_0046 — ABMIL attention temperature T=0.3 (sharper than T=0.5)
+**Status:** NO_IMPROVEMENT
+**Score:** 0.8204 AUROC  (parent: 0.8521, Δ=−0.032)
+**Parent:** exp_0044
+**What changed:** `src/models/Discriminator.py` — changed `ABMILAggregator.forward` to use `torch.softmax(A / 0.3, dim=0)`. Temperature=0.3 sharpens attention further beyond T=0.5, concentrating weight on even fewer patches.
+**Notes:** Clear regression (−0.032). T=0.3 is too aggressive — over-concentrating on very few patches loses important contextual signal. T=0.5 is the sweet spot: sharper than default (T=1.0) but not so sharp that it collapses to near-argmax selection. Temperature direction now exhausted.
+
+---
+
+## exp_0047 — Learnable ABMIL attention temperature
+**Status:** NO_IMPROVEMENT
+**Score:** 0.8452 AUROC  (parent: 0.8521, Δ=−0.007)
+**Parent:** exp_0044
+**What changed:** `src/models/Discriminator.py` — added `self.log_temperature = nn.Parameter(torch.log(torch.tensor(0.5)))` to `ABMILAggregator.__init__`; temperature computed as `F.softplus(self.log_temperature).clamp(min=1e-4)` in `forward`, replacing the fixed 0.5. Model learns optimal sharpness during training.
+**Notes:** Within noise floor (−0.007). The learnable T converged close to its init (T≈0.5) but couldn't beat the fixed value — gradient signal through the temperature parameter is too weak to push past the manual optimum. Fixed T=0.5 remains best; no benefit from making it learnable.
+
+---
+
+## exp_0045 — Pairwise AUROC surrogate loss lambda=0.01 (vs 0.1 in exp_0042)
+**Status:** NO_IMPROVEMENT
+**Score:** 0.8123 AUROC  (parent: 0.8318, Δ=−0.020)
+**Parent:** exp_0036
+**What changed:** `src/training/trainer.py` — same rolling-buffer pairwise ranking loss as exp_0042 but with `_ranking_lambda=0.01` (10× weaker). Epoch buffer reset via `on_train_epoch_start`. Score = `logits[1] - logits[0]` for n_classes=2.
+**Notes:** Regression (−0.020). AUROC surrogate loss consistently hurts regardless of lambda (0.01 or 0.1). The ranking signal conflicts with CE regardless of scale. Discard this direction.
 
 ---

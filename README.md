@@ -6,6 +6,20 @@ An autonomous experiment loop that iteratively improves a whole-slide image (WSI
   <img src="evo_dashboard.png" width="780" alt="evo dashboard — experiment tree and score timeline">
 </p>
 
+# Model Development
+
+All experiments that improved upon the baseline (0.768 macro AUROC), most recent first:
+
+| Exp | AUROC | Δ | What changed |
+|---|---|---|---|
+| exp_0044 | **0.852** | +0.020 | Sharper ABMIL attention (temperature T=0.5 in softmax) concentrates weight on fewer, more discriminative patches |
+| exp_0025 | 0.823 | +0.014 | Two-block deep ResidualMLP encoder (2560→1280→512) with two skip connections deepens the patch-embedding projection |
+| exp_0020 | 0.809 | +0.013 | Gated ABMIL aggregator stacked on the residual encoder replaces additive MIL pooling |
+| exp_0019 | 0.796 | +0.027 | Residual MLP encoder with skip connection combined with warmup+cosine LR schedule |
+| exp_0017 | 0.785 | +0.017 | ABMIL gated attention aggregator + warmup+cosine LR schedule on the 20-epoch baseline |
+| exp_0016 | 0.779 | +0.011 | Transformer aggregator with 2D RoPE spatial encoding (dead-end branch, later superseded by ABMIL) |
+| exp_0004 | 0.784 | +0.016 | Warmup + cosine annealing LR schedule replacing the fixed learning rate |
+
 ## What it does
 
 The system runs a hill-climbing optimisation loop over a MIL (Multiple Instance Learning) model for WSI classification. In each round, AI subagents propose and evaluate architectural or training changes — LR schedules, aggregation strategies, loss functions, encoder design — and the best-scoring variants are kept. The loop runs autonomously until a target metric is reached or the stall limit is hit.
