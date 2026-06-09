@@ -20,6 +20,8 @@ All experiments that improved upon the baseline (0.768 macro AUROC), most recent
 | exp_0016 | 0.779 | +0.011 | Transformer aggregator with 2D RoPE spatial encoding (dead-end branch, later superseded by ABMIL) |
 | exp_0004 | 0.784 | +0.016 | Warmup + cosine annealing LR schedule replacing the fixed learning rate |
 
+Full notes in [EXPERIMENTS.md](EXPERIMENTS.md).
+
 ## What it does
 
 The system runs a hill-climbing optimisation loop over a MIL (Multiple Instance Learning) model for WSI classification. In each round, AI subagents propose and evaluate architectural or training changes — LR schedules, aggregation strategies, loss functions, encoder design — and the best-scoring variants are kept. The loop runs autonomously until a target metric is reached or the stall limit is hit.
